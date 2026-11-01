@@ -14,6 +14,15 @@ extends Control
 ## and the best fit wins. Everything FRAME does differently here is behind
 ## `frame_round`.
 ##
+## And DEADLINE (GameSettings.tower_is_deadline): no line to reach, but one
+## rising under every tower (TowerMode.DEADLINE_*). A tower whose top stays
+## under it too long drops out the way a race tower out of lives does, and
+## the last one left wins. The one thing that is new here is a tie:
+## every line rises in step, so two towers *can* go under on the same physics
+## frame — two identical towers do, and every tower is dealt the same bricks —
+## and the decision waits for the end of that frame to see who else did.
+## Everything else DEADLINE does differently here is behind `deadline_round`.
+##
 ## ## Why several TowerModes rather than one with several platforms
 ##
 ## A TowerMode is one turn loop: one brick in the air, one settle, one
@@ -76,6 +85,10 @@ const BAR_EMPTY := Color(1.0, 1.0, 1.0, 0.14)
 const BAR_PLATE := Color(0.05, 0.06, 0.14, 0.72)
 const OUT_DIM := Color(0.04, 0.04, 0.09, 0.62)
 const OUT_TEXT := Color(1.0, 0.45, 0.42, 0.95)
+# DEADLINE's bar is how far the top is over the line: full from this many
+# cells up, and draining as the line closes in.
+const DEADLINE_BAR_CELLS := 6.0
+const DANGER := Color(1.0, 0.22, 0.16, 1.0)
 
 @onready var screens: Control = $Screens
 @onready var frame: Control = $Frame
@@ -89,6 +102,11 @@ var towers: Array = [] # left to right; untyped, TowerMode has no class_name
 var dropped_out: Array[bool] = [] # per tower: ran out of lives, race goes on without it
 var done: Array[bool] = [] # FRAME, per tower: placed all its bricks, waiting for the rest
 var frame_round := false
+var deadline_round := false
+# DEADLINE, per tower: the physics frame the line took it on, -1 while it has
+# not. Towers that went under on the same frame share a place.
+var out_frame: Array[int] = []
+var _deciding := false # DEADLINE: a decision is waiting for the end of this physics frame
 var viewports: Array[SubViewport] = []
 var view_w: float = 0.0
 var over := false
@@ -102,6 +120,7 @@ func _ready() -> void:
 	frame.draw.connect(_draw_frame)
 	variant = GameSettings.tower_variant if GameSettings.tower_is_hosted() else GameSettings.TOWER_RACE
 	frame_round = GameSettings.tower_is_frame(variant)
+	deadline_round = GameSettings.tower_is_deadline(variant)
 	var full := size
 	if full.x <= 0.0:
 		full = get_viewport().get_visible_rect().size
@@ -143,6 +162,7 @@ func _ready() -> void:
 		viewports.append(vp)
 		dropped_out.append(false)
 		done.append(false)
+		out_frame.append(-1)
 	get_tree().root.size_changed.connect(_on_window_resized)
 
 # One tower per team: two in the team race, one per player in the solo one.
@@ -191,10 +211,12 @@ func _restart() -> void:
 	winner = -1
 	out_order = []
 	overlay.visible = false
+	_deciding = false
 	var deal: int = _new_deal()
 	for i in range(towers.size()):
 		dropped_out[i] = false
 		done[i] = false
+		out_frame[i] = -1
 		towers[i].brick_seed = deal
 		towers[i]._start_match()
 
@@ -258,7 +280,16 @@ func tower_finished(tower) -> void:
 		return
 	dropped_out[i] = true
 	out_order.append(i)
+	out_frame[i] = Engine.get_physics_frames()
 	tower.halt()
+	if deadline_round:
+		# Not decided yet: a tower later in the tree may be going under on
+		# this same frame and has not been told. _deadline_decide() runs once
+		# every tower has had the frame.
+		if not _deciding:
+			_deciding = true
+			_deadline_decide.call_deferred()
+		return
 	var left: Array[int] = []
 	for j in range(towers.size()):
 		if not dropped_out[j]:
@@ -291,17 +322,51 @@ func _frame_finished(i: int) -> void:
 	else:
 		_declare(best, "the best fit, %d%%" % towers[best].frame_pct())
 
+# DEADLINE: whoever went under the line this frame has been dropped, and every
+# tower has now had the frame. Over when one is left above it; if the last
+# ones all went under on the same frame, they are level — no one of them
+# lasted longer — and it is a dead heat.
+func _deadline_decide() -> void:
+	_deciding = false
+	if over:
+		return
+	var left: Array[int] = []
+	for j in range(towers.size()):
+		if not dropped_out[j]:
+			left.append(j)
+	if left.size() > 1:
+		return
+	var last: int = out_order.back()
+	if left.size() == 1:
+		# Not "the last one above the line": the one left is often under it
+		# too, with time still on its count.
+		var why: String = "%s stayed under the line too long" % _name_of(last) if towers.size() == 2 \
+			else "%s outlasted everyone" % _name_of(left[0])
+		_declare(left[0], why)
+		return
+	var level: Array[int] = []
+	for j in out_order:
+		if out_frame[j] == out_frame[last]:
+			level.append(j)
+	if level.size() == 1:
+		_declare(last, "%s lasted longest" % _name_of(last))
+	else:
+		var names: Array[String] = []
+		for j in level:
+			names.append(_name_of(j))
+		_declare(-1, "%s went under the line together" % " and ".join(names))
+
 func _declare(won: int, why: String) -> void:
 	over = true
 	winner = won
 	for t in towers:
 		t.halt()
-	overlay_title.text = ("IT'S A DRAW" if frame_round else "NOBODY WINS") if won < 0 else "%s WINS" % _name_of(won)
+	overlay_title.text = ("IT'S A DRAW" if frame_round or deadline_round else "NOBODY WINS") if won < 0 else "%s WINS" % _name_of(won)
 	var lines: Array[String] = [why, ""]
 	for t in towers:
 		lines.append(t.team_summary())
 	overlay_body.text = "\n".join(lines)
-	if frame_round:
+	if frame_round or deadline_round:
 		overlay_hint.text = "ENTER to play again      ESC for the menu"
 	if GameSettings.tower_cup != GameSettings.TOWER_CUP_NONE:
 		var order: Array[int] = placements()
@@ -349,11 +414,16 @@ func placements() -> Array[int]:
 	return order
 
 # Each entry of placements()' 0-based place: its index, except in FRAME,
-# where the same fit is the same place — 1st, 1st, 3rd.
+# where the same fit is the same place — 1st, 1st, 3rd — and in DEADLINE,
+# where towers the line took on the same frame share one. The winner never
+# shares: a tower that won by lasting longest went under on a frame alone.
 func placement_places(order: Array[int]) -> Array[int]:
 	var out: Array[int] = []
 	for k in range(order.size()):
 		if frame_round and k > 0 and towers[order[k]].frame_pct() == towers[order[k - 1]].frame_pct():
+			out.append(out[k - 1])
+		elif deadline_round and k > 0 and order[k - 1] != winner and out_frame[order[k]] >= 0 \
+				and out_frame[order[k]] == out_frame[order[k - 1]]:
 			out.append(out[k - 1])
 		else:
 			out.append(k)
@@ -389,6 +459,9 @@ func _draw_frame() -> void:
 				HORIZONTAL_ALIGNMENT_CENTER, view_w, 30, OUT_TEXT)
 		if frame_round:
 			_draw_fit_bar(i, x0, h)
+			continue
+		if deadline_round:
+			_draw_deadline_bar(i, x0, h)
 			continue
 		if goal <= 0.0:
 			continue
@@ -427,3 +500,34 @@ func _draw_fit_bar(i: int, x0: float, h: float) -> void:
 		var left: int = maxi(0, t.FRAME_BRICKS - t.bricks_placed)
 		frame.draw_string(font, Vector2(x0, by - 18.0), "%d %s LEFT" % [left, "BRICK" if left == 1 else "BRICKS"],
 			HORIZONTAL_ALIGNMENT_CENTER, view_w, 15, Color(1.0, 1.0, 1.0, 0.85))
+
+# DEADLINE's bar, in the race bar's place and on its baseline: how far the top
+# is over the line, full from DEADLINE_BAR_CELLS up and draining as the line
+# closes in. Once the top is under, it is the time left instead, red and
+# running out, with the count over it and a red edge round the whole view — a
+# player watching their own brick should not have to look down to find out
+# they are going.
+func _draw_deadline_bar(i: int, x0: float, h: float) -> void:
+	var t = towers[i]
+	var font: Font = ThemeDB.fallback_font
+	var bx: float = x0 + BAR_MARGIN
+	var bw: float = view_w - BAR_MARGIN * 2.0 - 52.0
+	var by: float = h - BAR_UP
+	frame.draw_rect(Rect2(bx - 6.0, by - 8.0, view_w - BAR_MARGIN * 2.0 + 12.0, BAR_H + 16.0), BAR_PLATE, true)
+	frame.draw_rect(Rect2(bx, by, bw, BAR_H), BAR_EMPTY, true)
+	if dropped_out[i] or over:
+		return
+	if t.under_time <= 0.0:
+		var margin: float = maxf(0.0, t.deadline_margin())
+		frame.draw_rect(Rect2(bx, by, bw * clampf(margin / DEADLINE_BAR_CELLS, 0.0, 1.0), BAR_H), t._team_color(i), true)
+		frame.draw_string(font, Vector2(bx + bw + 8.0, by + BAR_H), "+%d" % floori(margin),
+			HORIZONTAL_ALIGNMENT_LEFT, 52.0, 13, Color(1.0, 1.0, 1.0, 0.9))
+		return
+	var left: float = maxf(0.0, t.DEADLINE_GRACE - t.under_time)
+	var pulse: float = 0.5 + 0.5 * cos(t.under_time * TAU * 2.5)
+	frame.draw_rect(Rect2(x0 + 3.0, 3.0, view_w - 6.0, h - 6.0), Color(DANGER.r, DANGER.g, DANGER.b, 0.35 + 0.45 * pulse), false, 6.0)
+	frame.draw_rect(Rect2(bx, by, bw * left / t.DEADLINE_GRACE, BAR_H), Color(DANGER.r, DANGER.g, DANGER.b, 0.7 + 0.3 * pulse), true)
+	frame.draw_string(font, Vector2(bx + bw + 8.0, by + BAR_H), "%.1fs" % left,
+		HORIZONTAL_ALIGNMENT_LEFT, 52.0, 13, DANGER)
+	frame.draw_string(font, Vector2(x0, by - 18.0), "UNDER THE LINE — OUT IN %.1f" % left,
+		HORIZONTAL_ALIGNMENT_CENTER, view_w, 15, DANGER)

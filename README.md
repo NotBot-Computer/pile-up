@@ -6,7 +6,7 @@ Built in **Godot 4**. It started life as one of the two modes of *Traffic Tower*
 
 ## How it plays
 
-One shared tower. Players take turns steering bricks down onto a single narrow platform, under real physics. When everything stops moving, anything that fell off costs the player who dropped it a life — one of the hearts on their card blinks and is gone. Three lives each; last builder standing wins. That's **free-for-all**, one of seven ways to play it — see [Pile Up's variants](#pile-ups-variants). Pile Up is always played as a **cup**: a run of rounds in a different variant each time, first to 15 trophies (see [Cups](#cups)).
+One shared tower. Players take turns steering bricks down onto a single narrow platform, under real physics. When everything stops moving, anything that fell off costs the player who dropped it a life — one of the hearts on their card blinks and is gone. Three lives each; last builder standing wins. That's **free-for-all**, one of ten ways to play it — see [Pile Up's variants](#pile-ups-variants). Pile Up is always played as a **cup**: a run of rounds in a different variant each time, first to 15 trophies (see [Cups](#cups)).
 
 ## Playing it
 
@@ -35,7 +35,7 @@ You can walk a brick up to two blocks past the platform edge if you want to — 
 
 ### Pile Up's variants
 
-None of these is picked on its own: each is a round of one of the two [cups](#cups) — the solo cup plays Free for all, Race, Co-op and Frame, the team cup Teams, Team Race, Co-Pilot and Team Frame. Teams are seats, not a choice: **P1 + P3 are the left team** (both on the left half of the keyboard) and **P2 + P4 the right**, so nobody reaches across a rival and the turn order alternates sides on its own. A team shares one row of lives, shown once on its header above its members' cards.
+None of these is picked on its own: each is a round of one of the two [cups](#cups) — the solo cup plays Free for all, Race, Co-op, Frame and Deadline, the team cup Teams, Team Race, Co-Pilot, Team Frame and Team Deadline. Teams are seats, not a choice: **P1 + P3 are the left team** (both on the left half of the keyboard) and **P2 + P4 the right**, so nobody reaches across a rival and the turn order alternates sides on its own. A team shares one row of lives, shown once on its header above its members' cards.
 
 | Variant | Players | How it plays |
 |---|---|---|
@@ -47,6 +47,8 @@ None of these is picked on its own: each is a round of one of the two [cups](#cu
 | **TEAM RACE** | 2-4 | A tower each, side by side, building **at the same time**. Same bricks, same order, both sides. First team to settle its tower over the **line 15 blocks up** wins; run out of your **5 lives** first and you lose. A hex you cast lands on the *other* tower's next brick. A bar along the bottom of each tower shows its progress to the line. |
 | **FRAME** | 2-4 | A tower each, side by side, and on every platform **the same outline** — a frame to fill. Everyone gets **the same 10 bricks in the same order**, and the frame is built out of exactly those bricks, so it can always be filled perfectly (in the order they come, on the half-block steps the keys move in). Bricks you lay inside the frame count for you and anything **sticking out of it counts against you**; a brick that falls off just leaves its part of the frame empty. When everyone has placed their 10, the **best fit** wins (a bar under each tower shows the fit as it goes). No lives and no skills in this one. Sometimes a frame has a small window in it — that's a gap the bricks leave when stacked in that order, and it isn't part of the frame. |
 | **TEAM FRAME** | 2-4 | The same, a frame per team: P1 + P3 build the left one and P2 + P4 the right, taking turns. Best fit wins. |
+| **DEADLINE** | 2-4 | A tower each, side by side, everyone building **at the same time** with the same bricks — and a **red line** across every tower that starts at the ground and **rises for the whole round, faster and faster**. The part of the world under it is washed red. If the top of your tower stays **under the line for 3 seconds**, you're out; get a brick back over it in time and the count starts again (a brick counts the moment it lands, not while you're still flying it). Last one left in wins; if the last ones go under on the very same frame it's a draw. A bar under each tower shows how far you are over the line; once you're under, it turns red, the view gets a red edge and **UNDER THE LINE — OUT IN 2.1** counts down over it. No lives — a brick you drop costs you the height it would have added — and skills are on, with hexes going to whoever is highest. |
+| **TEAM DEADLINE** | 2-4 | The same, a tower per team: P1 + P3 build the left one and P2 + P4 the right, taking turns. The last team left in wins. |
 
 ### Cups
 
@@ -54,10 +56,10 @@ A cup is several rounds of Pile Up, **a different variant every round**, scored 
 
 | Cup | Players | Rounds, in turn |
 |---|---|---|
-| **SOLO CUP** | 2-4 | Free for all → Race → Co-op: The Storm → Frame → Free for all → … |
-| **TEAM CUP** | 3-4 | Teams → Team Race → Co-Pilot → Team Frame → … (Co-Pilot only with four) — the trophies go to the team: 3 for a round won, 0 for a round lost, so it's first to five wins |
+| **SOLO CUP** | 2-4 | Free for all → Race → Co-op: The Storm → Frame → Deadline → Free for all → … |
+| **TEAM CUP** | 3-4 | Teams → Team Race → Co-Pilot → Team Frame → Team Deadline → … (Co-Pilot only with four) — the trophies go to the team: 3 for a round won, 0 for a round lost, so it's first to five wins |
 
-Between rounds a **trophy count** shows every player's (or team's) row, marked by their own car on the left. Each trophy is a car **in the colour of whoever won that round**: if blue wins, the winner gets three blue cars, 2nd two blue cars and 3rd one; if purple wins the next round, that round's trophies are all purple. So each row is a coloured history of the cup — whose rounds you scored in — with dark empty spaces up to a finish flag at 15. A winning team's trophies alternate its two members' colours. It names the mode coming next; **Enter** starts it (the first Enter skips the count-up). A round's result screen moves on to the count by itself after a few seconds, or straight away on Enter. How a round is ranked: on one tower, whoever is left standing is 1st and the rest in reverse order of going out; in a race, whoever crosses the line is 1st, then anyone still building by height, then whoever dropped out, last one out highest; in co-op, whoever dropped the fewest bricks is 1st, and players who dropped the same number share a place and its trophies (1st, 1st, 3rd); in a frame round, best fit first, and an equal fit (to the percent) is a shared place too. If two players pass 15 in the same round, the higher total wins, and a tie goes to whoever placed better in that round. **Esc** leaves the cup.
+Between rounds a **trophy count** shows every player's (or team's) row, marked by their own car on the left. Each trophy is a car **in the colour of whoever won that round**: if blue wins, the winner gets three blue cars, 2nd two blue cars and 3rd one; if purple wins the next round, that round's trophies are all purple. So each row is a coloured history of the cup — whose rounds you scored in — with dark empty spaces up to a finish flag at 15. A winning team's trophies alternate its two members' colours. It names the mode coming next; **Enter** starts it (the first Enter skips the count-up). A round's result screen moves on to the count by itself after a few seconds, or straight away on Enter. How a round is ranked: on one tower, whoever is left standing is 1st and the rest in reverse order of going out; in a race, whoever crosses the line is 1st, then anyone still building by height, then whoever dropped out, last one out highest; in co-op, whoever dropped the fewest bricks is 1st, and players who dropped the same number share a place and its trophies (1st, 1st, 3rd); in a frame round, best fit first, and an equal fit (to the percent) is a shared place too; in a deadline round, the last one left is 1st and the rest in reverse order of going under, with towers that went under on the same frame sharing a place. If two players pass 15 in the same round, the higher total wins, and a tie goes to whoever placed better in that round. **Esc** leaves the cup.
 
 Skills are earned by building. Every **clean placement** — your brick landed and nothing fell — fills one segment of the charge bar along the top of your card; two of them hand you a random skill into whichever of your two slots is empty. The green slot is a **self** skill and the red one is a **hex**, each on its own key (shown under the slot), and both can only be cast **while your own brick is in the air**. A self skill goes off on the spot. A hex waits for its target's next turn and lands the moment their brick appears — the tower is shared and a turn's falls are charged to whoever is on the clock, so a hex that hit during *your* turn would only ever hurt you. Hexes in flight are listed under the turn banner, so the player about to receive one sees it coming.
 
@@ -143,7 +145,7 @@ scripts/
   HeartPips.gd          the life pip, and its per-player recolour
   TowerMode.gd          Pile Up: turn order, drop/settle/resolve loop, lives, camera
                         — and the variants: teams, crews, goal lines, the storm
-  TowerRace.gd          hosts a race's towers, relays hexes (to the leader), owns its result screen
+  TowerRace.gd          hosts a race's towers (and FRAME's and DEADLINE's), relays hexes (to the leader), owns its result screen
   TowerCup.gd           the cup's trophy count: each player's cars by the round, and the next round's mode
   TowerPiece.gd         one brick: collision from cell rects, physics material, fall cap
   TowerMode.gd          (see above) also owns the shape-query movement model

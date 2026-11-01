@@ -321,6 +321,37 @@ const FRAME_FILL := Color(1.0, 0.92, 0.55, 0.16)
 const FRAME_SHADOW := Color(0.06, 0.08, 0.20, 0.60)
 const TowerFrame := preload("res://scripts/TowerFrame.gd")
 
+# DEADLINE (GameSettings.tower_is_deadline): a red line across the tower that
+# starts at the ground and climbs for the whole round, faster all the time. A
+# tower whose top stays under it for DEADLINE_GRACE seconds in a row is out;
+# get back over it in time and the count starts again. The host declares the
+# last tower left in the winner. Asked for from a sketch, in Turkish:
+# a line under everyone's tower, rising faster as time goes on, and whoever's
+# top stays under it for a while is eliminated (session AN).
+#
+# After t seconds of play the line is DEADLINE_START_CELLS + DEADLINE_SPEED·t
+# + ½·DEADLINE_ACCEL·t² cells up: 0.15 cells/s at GO!, 0.45 after 25s, 0.75
+# after 50s — faster than anyone stacks for long, so no round can go on for
+# ever. Every tower runs its line off its own clock, and the clocks agree
+# because every tower's countdown ends on the same physics frame.
+#
+# No lives: a fallen brick costs the height it did not add, which is exactly
+# what the line reads, and a second way out would blur the one rule. Skills
+# stay on — a hex that slows the leader down is what the line rewards.
+# Unplayed; the speeds are first guesses checked against DeadlineProbe's
+# blind aim, see docs/PROJECT_STATE.md §5 session AN.
+const DEADLINE_START_CELLS := -GROUND_Y / CELL # the ground line, under the outcrop
+const DEADLINE_SPEED := 0.15 # cells/s at GO!
+const DEADLINE_ACCEL := 0.012 # cells/s the line gains every second
+const DEADLINE_GRACE := 3.0 # seconds a top may stay under the line
+const DEADLINE_COLOR := Color(1.0, 0.24, 0.20, 0.95)
+const DEADLINE_SHADOW := Color(0.20, 0.02, 0.04, 0.60)
+# The sky under the line is washed red, strongest just under it, so the part
+# of the tower that is already under is seen to be under.
+const DEADLINE_WASH_NEAR := Color(1.0, 0.16, 0.10, 0.30)
+const DEADLINE_WASH := Color(0.90, 0.10, 0.08, 0.13)
+const DEADLINE_WASH_BAND := 2.0 # cells over which the wash fades from near to far
+
 # The storm casts a random hex from the opponent pool at whoever is up next,
 # every STORM_EVERY turns — and every STORM_EVERY_HIGH once the tower is past
 # half the goal, so the last stretch is the stormy one. Queued at the end of
@@ -567,6 +598,12 @@ var goal_cells: float = 0.0 # 0 = no goal line (free-for-all, teams, co-pilot)
 var frame_cells: Dictionary = {} # FRAME only: Vector2i(col from the platform's left, row up) -> true
 var frame_plan: Array = [] # FRAME only: how the frame was built, brick by brick (TowerFrame.generate)
 var frame_score: float = 0.0 # FRAME only: the last mark, 0..1 (TowerFrame.mark)
+var deadline_time: float = 0.0 # DEADLINE only: seconds of play so far, which the line's height is read off
+var deadline_cells: float = 0.0 # DEADLINE only: the line, in cells over the platform's top (under it at first)
+var deadline_top: float = 0.0 # DEADLINE only: the tower's top as the line last measured it (_top_cells())
+var under_time: float = 0.0 # DEADLINE only: how long the top has been under the line, this time round
+var deadline_out_at: float = -1.0 # DEADLINE only: deadline_time when the line took this tower; -1 while it has not
+var deadline_layer: Node2D = null # DEADLINE only: the canvas the line is drawn on, over the bricks
 var storm_in: int = 0 # co-op: resolved turns until the storm casts again
 var storms: int = 0 # co-op: hexes the storm has sent this match
 var active_piece: TowerPiece = null
@@ -647,6 +684,17 @@ func _ready() -> void:
 	skill_overlay.mode = self
 	skill_screen.mode = self
 
+	# DEADLINE's line goes over the bricks and the ground — Foreground draws
+	# after PiecesContainer — so a tower under it is seen to be under it; and
+	# under the skills' overlay, so a night that hides the tower hides the
+	# line too. Only made in that round: every other one keeps the scene tree
+	# it always had.
+	if is_deadline():
+		deadline_layer = Node2D.new()
+		deadline_layer.name = "Deadline"
+		ground.add_sibling(deadline_layer)
+		deadline_layer.draw.connect(_draw_deadline)
+
 	_start_match()
 
 # --- Match / turn flow -----------------------------------------------------
@@ -692,6 +740,11 @@ func _start_match() -> void:
 	frame_cells = {}
 	frame_plan = []
 	frame_score = 0.0
+	deadline_time = 0.0
+	deadline_cells = _deadline_at(0.0)
+	deadline_top = 0.0
+	under_time = 0.0
+	deadline_out_at = -1.0
 	if is_frame():
 		# A frame is made from the deal, so it needs one even off the host.
 		if brick_seed == 0:
@@ -842,8 +895,10 @@ func _resolve_turn() -> void:
 	var team: int = team_of[active_slot]
 	if is_frame():
 		_update_frame_mark()
-		if fallen_this_turn > 0:
-			bricks_dropped[active_slot] += fallen_this_turn
+	if is_frame() or is_deadline():
+		# Neither has lives to spend on a fall: it costs fit, or the height it
+		# did not add — which is exactly what the line reads.
+		bricks_dropped[active_slot] += fallen_this_turn
 	elif fallen_this_turn > 0:
 		lives[team] = max(0, lives[team] - 1)
 		bricks_dropped[active_slot] += fallen_this_turn
@@ -1046,6 +1101,16 @@ func team_summary() -> String:
 			dropped += bricks_dropped[s]
 		var who: String = slot_name(crew[0]) if crew.size() == 1 else GameSettings.tower_team_name(t, variant)
 		return "%s — %d%% fit, %d %s dropped" % [who, frame_pct(), dropped, "brick" if dropped == 1 else "bricks"]
+	if is_deadline():
+		var lost := 0
+		for s in crew:
+			lost += bricks_dropped[s]
+		var who: String = slot_name(crew[0]) if crew.size() == 1 else GameSettings.tower_team_name(t, variant)
+		# "Still in", not "above the line": the winner is often under it too,
+		# with time left on its count, when the last rival's runs out.
+		var held: String = ("out after %ds" % roundi(deadline_out_at)) if deadline_out_at >= 0.0 \
+			else ("still in after %ds" % roundi(deadline_time))
+		return "%s — %s, %d high, %d %s dropped" % [who, held, roundi(_top_cells()), lost, "brick" if lost == 1 else "bricks"]
 	var standing: String = "OUT" if lives[t] <= 0 else "%d %s left" % [lives[t], "life" if lives[t] == 1 else "lives"]
 	# A tower of one (the solo race) is named once, not as a team and again
 	# as its only member.
@@ -1117,6 +1182,8 @@ func _process(delta: float) -> void:
 		if _cup_leave_in <= 0.0:
 			_leave_for_cup()
 	queue_redraw()
+	if deadline_layer != null:
+		deadline_layer.queue_redraw()
 	# Every frame, live effects or not: a CanvasItem keeps its last draw list
 	# until asked again, so the frame after the last effect leaves needs a
 	# redraw too, and asking unconditionally is cheaper than tracking that.
@@ -1128,6 +1195,8 @@ func _physics_process(delta: float) -> void:
 	if state == "piloting" or state == "settling" or state == "resolving":
 		for e in _live_for(active_slot):
 			e.tick(delta)
+		if is_deadline():
+			_update_deadline(delta)
 	match state:
 		"countdown":
 			# Advanced here, not from the node's own _process: the first
@@ -1459,6 +1528,8 @@ func _start_lives() -> int:
 			return RACE_LIVES
 		GameSettings.TOWER_FRAME, GameSettings.TOWER_FRAME_SOLO:
 			return 1 # never spent: a fallen brick costs fit, not a life
+		GameSettings.TOWER_DEADLINE, GameSettings.TOWER_DEADLINE_SOLO:
+			return 1 # never spent on a fall: only the line takes it
 	return TEAM_LIVES
 
 func _goal_for_variant() -> float:
@@ -1490,6 +1561,57 @@ func _update_frame_mark() -> void:
 			settled.append(p)
 	var reach: float = PLATFORM_CELLS * CELL * 0.5 + AIM_BOUND_CELLS * CELL + CELL
 	frame_score = TowerFrame.mark(frame_cells, settled, int(PLATFORM_CELLS), CELL, reach)["score"]
+
+func is_deadline() -> bool:
+	return GameSettings.tower_is_deadline(variant)
+
+# Where the line is after `t` seconds of play, in cells over the platform's
+# top — see DEADLINE_SPEED.
+func _deadline_at(t: float) -> float:
+	return DEADLINE_START_CELLS + DEADLINE_SPEED * t + 0.5 * DEADLINE_ACCEL * t * t
+
+# How far the top is over the line, in cells; negative while it is under.
+func deadline_margin() -> float:
+	return deadline_top - deadline_cells
+
+# The top the line is measured against, in cells: every brick on the tower,
+# the one just let go included — it is part of the tower from the moment it
+# lands, while it is still settling — and never the one still being flown, or
+# a brick held up in the air would count as height. The platform's own top
+# (0) with nothing on it. Not stack_top_y, which leaves the settling brick out
+# so the camera does not chase a brick on its way down.
+func _top_cells() -> float:
+	var top := 0.0
+	for c in pieces.get_children():
+		var p := c as TowerPiece
+		if p == null or p.held or p.doomed:
+			continue
+		top = minf(top, p.top_y())
+	return -top / CELL
+
+# DEADLINE, every physics frame of play: the line climbs, and a top under it
+# runs its time out. Being back over it, even for a frame, starts the count
+# again. When the time is up the tower is out on the spot — mid-descent too,
+# since the line does not wait for a turn to end — and _end_match() tells the
+# host, which declares a winner once only one tower is left above.
+func _update_deadline(delta: float) -> void:
+	deadline_time += delta
+	deadline_cells = _deadline_at(deadline_time)
+	deadline_top = _top_cells()
+	if deadline_top >= deadline_cells:
+		under_time = 0.0
+		return
+	under_time += delta
+	if under_time < DEADLINE_GRACE:
+		return
+	deadline_out_at = deadline_time
+	# A hosted tower has one team on it. Played on its own, the line takes
+	# everyone on the tower together — they were all under it.
+	for t in _teams_here():
+		if lives[t] > 0:
+			lives[t] = 0
+			out_order.append(t)
+	_end_match()
 
 # Co-op only, once per resolved turn the crew survived. Counts down, and at
 # zero sends a random hex at whoever flies next — as slot -1, which every
@@ -2077,7 +2199,7 @@ func _refresh_hud() -> void:
 		})
 	hud.hexes = hexes
 	hud.hex_slot = _has_rivals()
-	hud.max_lives = 0 if is_frame() else _start_lives()
+	hud.max_lives = 0 if is_frame() or is_deadline() else _start_lives()
 	hud.active_slot = active_slot
 	hud.crew_mate = crew_mate
 	hud.waiting = (state != "piloting")
@@ -2108,7 +2230,8 @@ func _hud_groups() -> Array[Dictionary]:
 			# A tower of one in the solo race: a team header naming the same
 			# player as the card under it would say everything twice, so it
 			# draws as a free-for-all card, pips and all.
-			"plain": variant == GameSettings.TOWER_RACE_SOLO or variant == GameSettings.TOWER_FRAME_SOLO,
+			"plain": variant == GameSettings.TOWER_RACE_SOLO or variant == GameSettings.TOWER_FRAME_SOLO \
+				or variant == GameSettings.TOWER_DEADLINE_SOLO,
 		})
 	return out
 
@@ -2133,6 +2256,10 @@ func _hud_subtitle() -> String:
 			# Short: the column is 230px at 13px, and "fill the frame" plus a
 			# three-digit fit ran off the end of it.
 			return "frame  ·  %d%% fit  ·  brick %d/%d" % [frame_pct(), mini(bricks_placed + 1, FRAME_BRICKS), FRAME_BRICKS]
+		GameSettings.TOWER_DEADLINE, GameSettings.TOWER_DEADLINE_SOLO:
+			# The rule rather than the line's height, which starts under the
+			# platform ("line -3") — how far over it you are is on the bar.
+			return "stay over the line  ·  height %d" % roundi(deadline_top)
 	return "one tower, three lives each"
 
 # The navigator for the turn after this one, so the co-pilot banner can name
@@ -2302,6 +2429,34 @@ func _draw_frame_outline() -> void:
 		draw_line(e[0], e[1], FRAME_SHADOW, _px(7.0))
 	for e in edges:
 		draw_line(e[0], e[1], FRAME_LINE, _px(3.0))
+
+# DEADLINE's line, on its own canvas over the bricks and the ground (see
+# _ready()): a red wash over everything under it, strongest just under the
+# line, and the line itself across the whole view on a dark underlay, so it
+# survives a bright sky (§7) the way the goal line does. While the top is
+# under it the line pulses; how long is left is the host's to say, over the
+# view, where the other towers' players can read it too.
+func _draw_deadline() -> void:
+	var view: Vector2 = _view_world()
+	var bottom: float = cam_y + view.y * 0.5
+	var y: float = -deadline_cells * CELL
+	if y > bottom:
+		return
+	var half: float = view.x * 0.5
+	var band: float = DEADLINE_WASH_BAND * CELL
+	deadline_layer.draw_polygon(
+		PackedVector2Array([Vector2(-half, y), Vector2(half, y), Vector2(half, y + band), Vector2(-half, y + band)]),
+		PackedColorArray([DEADLINE_WASH_NEAR, DEADLINE_WASH_NEAR, DEADLINE_WASH, DEADLINE_WASH]))
+	if bottom > y + band:
+		deadline_layer.draw_rect(Rect2(-half, y + band, half * 2.0, bottom - y - band), DEADLINE_WASH, true)
+	var c: Color = DEADLINE_COLOR
+	var w: float = 3.5
+	if under_time > 0.0 and state != "gameover":
+		var pulse: float = 0.5 + 0.5 * cos(under_time * TAU * 2.5)
+		c = c.lerp(Color(1.0, 0.86, 0.80, 1.0), pulse * 0.6)
+		w += 2.5 * pulse
+	deadline_layer.draw_line(Vector2(-half, y), Vector2(half, y), DEADLINE_SHADOW, _px(w + 5.0))
+	deadline_layer.draw_line(Vector2(-half, y), Vector2(half, y), c, _px(w))
 
 # The tower stands on a rock outcrop growing out of the ground, not on a
 # platform on legs. Same silhouette language as the cliffs in the backdrop: a
