@@ -111,22 +111,20 @@ func _report() -> void:
 	var settle := (s_fell * _settle_fell.size() + s_clean * _settle_clean.size()) / maxf(1.0, n)
 	# Explicitly typed: _mode is untyped (TowerMode has no class_name), so
 	# anything read off it defeats `:=` inference — see PROJECT_STATE §8.
-	var pause: float = (_mode.RESOLVE_PAUSE_EVENT * _settle_fell.size()
-		+ _mode.RESOLVE_PAUSE_QUIET * _settle_clean.size()) / maxf(1.0, n)
+	var pause: float = _mode.RESOLVE_PAUSE
 
 	print("PaceProbe — %d turns\n" % _pilot.size())
 	print("  descent (piloting)   : %5.2f s   of which %5.2f s before the brick" % [pilot, dead])
 	print("                                     is within two cells of anything")
 	print("  settling             : %5.2f s   (%.2f s when a brick fell, %.2f s when none did)"
 		% [settle, s_fell, s_clean])
-	print("  pause before next    : %5.2f s   (%.2f quiet / %.2f after a life lost)"
-		% [pause, _mode.RESOLVE_PAUSE_QUIET, _mode.RESOLVE_PAUSE_EVENT])
+	print("  pause before next    : %5.2f s   (one beat for every turn since session AM)" % pause)
 	print("  -----------------------------------")
 	print("  whole turn           : %5.2f s" % (pilot + settle + pause))
 	print("  hand-off             : %5.2f s   (landing -> next brick in reach)"
 		% (settle + pause + dead))
 	print("")
-	print("  quiet turn, end to end : %5.2f s" % (pilot + s_clean + _mode.RESOLVE_PAUSE_QUIET))
-	print("  constants: DESCEND_SPEED %.0f  SPAWN_CLEARANCE %.1f cells  SETTLE_HOLD %.2f" % [
-		_mode.DESCEND_SPEED, _mode.SPAWN_CLEARANCE / _mode.CELL, _mode.SETTLE_HOLD])
+	print("  quiet turn, end to end : %5.2f s" % (pilot + s_clean + pause))
+	print("  constants: DESCEND_SPEED %.0f  SPAWN_CLEARANCE %.1f cells  SETTLE_HOLD %.2f  APPROACH x%.1f until %.1f cells" % [
+		_mode.DESCEND_SPEED, _mode.SPAWN_CLEARANCE / _mode.CELL, _mode.SETTLE_HOLD, _mode.APPROACH_MULT, _mode.APPROACH_GAP_CELLS])
 	get_tree().quit()

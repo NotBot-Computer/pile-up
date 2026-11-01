@@ -143,7 +143,7 @@ func _next_scene() -> String:
 # only has to say so — the colour is still yours to pick.
 func _team_line(slot: int) -> String:
 	var v: int = GameSettings.tower_variant
-	if v == GameSettings.TOWER_FFA or v == GameSettings.TOWER_COOP or v == GameSettings.TOWER_RACE_SOLO:
+	if v == GameSettings.TOWER_FFA or v == GameSettings.TOWER_COOP or v == GameSettings.TOWER_RACE_SOLO or v == GameSettings.TOWER_FRAME_SOLO:
 		return ""
 	return GameSettings.tower_team_name(GameSettings.tower_team_of(slot)) + "\n"
 

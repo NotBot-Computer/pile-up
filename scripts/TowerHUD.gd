@@ -157,7 +157,7 @@ var _message_timer: float = 0.0
 
 # The pip currently on its way out, if any. One at a time is enough: only the
 # team that just dropped can lose a life, and the next turn is a whole
-# descent plus RESOLVE_PAUSE_EVENT away — far longer than LOSS_DURATION.
+# settle, a pause and a descent away — longer than HeartPips.LOSS_TOTAL.
 # Keyed by team, which in free-for-all is the player's own slot.
 var _loss_team: int = -1
 var _loss_pip: int = -1
@@ -183,7 +183,7 @@ func clear_message() -> void:
 func spend_life(team: int, pip_index: int) -> void:
 	_loss_team = team
 	_loss_pip = pip_index
-	_loss_timer = HeartPips.LOSS_DURATION
+	_loss_timer = HeartPips.LOSS_TOTAL
 
 ## Everything transient, cleared. A new match reuses this node, and a pip left
 ## mid-pop from the last one would play out over a fresh row of three.
@@ -379,10 +379,10 @@ func _draw_pips(x: float, pip_y: float, color: Color, have: int, team: int) -> v
 		if h < have:
 			_draw_pip(pip_tex, c, pip, 1.0, 1.0)
 		elif h == _loss_pip and team == _loss_team and _loss_timer > 0.0:
-			# The one just spent, swelling out of its slot as it fades — so it
-			# is seen to leave rather than being absent the next time anyone
-			# happens to look at the card.
-			var pose: Vector2 = HeartPips.loss_pose(HeartPips.LOSS_DURATION - _loss_timer)
+			# The one just spent: it blinks, then swells out of its slot as it
+			# fades — so it is seen to leave rather than being absent the next
+			# time anyone happens to look at the card.
+			var pose: Vector2 = HeartPips.loss_pose(HeartPips.LOSS_TOTAL - _loss_timer)
 			_draw_pip(pip_tex, c, pip, pose.x, pose.y)
 		else:
 			_draw_pip(pip_tex, c, pip, 1.0, PIP_EMPTY_ALPHA)
@@ -396,7 +396,12 @@ func _draw_pip(tex: Texture2D, at: Vector2, base: Vector2, scale_mult: float, al
 # Clean placements toward the next skill, as segments along the card's top
 # edge. Inside the card rather than a bar of its own: it is a minor readout
 # and the card is already the thing a player's eye goes to for their state.
+#
+# A charge_max of 0 means the round has no skills (FRAME), and then neither
+# the bar nor the two slots are drawn.
 func _draw_charge(slot: Dictionary, x0: float, w: float, y: float, color: Color) -> void:
+	if charge_max <= 0:
+		return
 	var n: int = maxi(1, charge_max)
 	var have: int = int(slot.get("charge", 0))
 	var seg: float = (w - float(n - 1) * 2.0) / float(n)
@@ -409,6 +414,8 @@ func _draw_charge(slot: Dictionary, x0: float, w: float, y: float, color: Color)
 # "nothing here yet" rather than as nothing; a full one is the glyph on its
 # disc.
 func _draw_slots(font: Font, slot: Dictionary, right: float, y: float, h: float) -> void:
+	if charge_max <= 0:
+		return
 	var sy: float = y + (h - SLOT_SIZE) * 0.5 - 4.0
 	var keys: PackedStringArray = str(slot.get("cast_label", "")).split("/")
 	var entries := [

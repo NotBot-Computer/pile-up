@@ -75,6 +75,10 @@ var held: bool = true
 # to wait for debris to finish its journey. See TowerMode.LOST_Y.
 var doomed: bool = false
 var glow: float = 1.0
+# 0 -> 1 over APPEAR_TIME from the moment it is dealt, so a new brick comes
+# in rather than blinking into existence between two frames (session AM).
+const APPEAR_TIME := 0.18
+var appear: float = 0.0
 # The CollisionShape2D children built in setup(). TowerMode queries these
 # directly (see its _blocked()) to decide whether a move is legal, because a
 # brick under the player's control is not in the collision world and so
@@ -177,6 +181,7 @@ func setup(index: int, cell_size: float, slot: int, color: Color) -> void:
 	continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
 	can_sleep = true
 	set_held(true)
+	modulate.a = 0.0
 
 func cell_count() -> int:
 	var n := 0.0
@@ -265,6 +270,9 @@ func _integrate_forces(state: PhysicsDirectBodyState2D) -> void:
 		state.linear_velocity.y = MAX_FALL_SPEED
 
 func _process(delta: float) -> void:
+	if appear < 1.0:
+		appear = minf(1.0, appear + delta / APPEAR_TIME)
+		modulate.a = appear * appear * (3.0 - 2.0 * appear)
 	if held:
 		return
 	if glow > 0.0:

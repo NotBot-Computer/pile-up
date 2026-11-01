@@ -16,12 +16,26 @@ const TOWER_COPILOT := 2 # two crews of two: one steers the brick, the other tur
 const TOWER_COOP := 3    # everyone against the storm, building to a goal line
 const TOWER_RACE := 4    # two towers side by side, first team to the line
 const TOWER_RACE_SOLO := 5 # a tower per player, side by side, first one to the line
+const TOWER_FRAME_SOLO := 6 # a tower per player, one outline to fill, best fit wins
+const TOWER_FRAME := 7      # the same, a tower per team
 var tower_variant: int = TOWER_FFA
 
 # Both races are hosted by TowerRace and share every race rule; they differ
 # only in who shares a tower — a team, or nobody.
 func tower_is_race(variant: int = tower_variant) -> bool:
 	return variant == TOWER_RACE or variant == TOWER_RACE_SOLO
+
+# FRAME: every tower gets the same outline on its platform, built from the
+# same bricks it is about to be dealt (TowerFrame), and fills it at once with
+# the others. Nobody is out and nothing is a race: each tower stops after
+# TowerMode.FRAME_BRICKS, and the best fit — frame covered, minus whatever
+# spills outside it — wins.
+func tower_is_frame(variant: int = tower_variant) -> bool:
+	return variant == TOWER_FRAME or variant == TOWER_FRAME_SOLO
+
+# Several towers side by side under TowerRace: the races and FRAME.
+func tower_is_hosted(variant: int = tower_variant) -> bool:
+	return tower_is_race(variant) or tower_is_frame(variant)
 
 # Every variant, and the player counts each one is playable at. `counts` is
 # what a cup checks before playing a variant as one of its rounds: a count
@@ -41,6 +55,8 @@ const TOWER_VARIANTS: Array[Dictionary] = [
 	{"id": TOWER_COPILOT, "title": "CO-PILOT", "hint": "two crews of two, one brick per crew — one of you steers it, the other turns it", "counts": [4]},
 	{"id": TOWER_COOP, "title": "CO-OP: THE STORM", "hint": "build to the goal line together while the storm throws hexes — fewest bricks dropped wins the round", "counts": [1, 2, 3, 4]},
 	{"id": TOWER_RACE, "title": "TEAM RACE", "hint": "a tower each, side by side — first to the line wins, and hexes cross over", "counts": [2, 3, 4]},
+	{"id": TOWER_FRAME_SOLO, "title": "FRAME", "hint": "the same outline and the same bricks for everyone — fill it best, and spilling over it costs you", "counts": [2, 3, 4]},
+	{"id": TOWER_FRAME, "title": "TEAM FRAME", "hint": "a frame per team, the same bricks both sides — best fit wins, spill costs you", "counts": [2, 3, 4]},
 ]
 
 func tower_variant_info(variant: int = tower_variant) -> Dictionary:
@@ -52,14 +68,14 @@ func tower_variant_info(variant: int = tower_variant) -> Dictionary:
 # Which scene plays a variant: a race is several TowerModes under a host of
 # its own, every other variant is one TowerMode that reads the variant itself.
 func tower_scene(variant: int = tower_variant) -> String:
-	if tower_is_race(variant):
+	if tower_is_hosted(variant):
 		return "res://scenes/TowerRace.tscn"
 	return "res://scenes/TowerMode.tscn"
 
 # --- Pile Up's cups ----------------------------------------------------------
 # A cup is a run of rounds, each one a *different* variant in turn — the
-# solo cup goes free-for-all (last builder standing), the race, co-op, the
-# team cup teams, team race, co-pilot — scored by where you finished:
+# solo cup goes free-for-all (last builder standing), the race, co-op, frame,
+# the team cup teams, team race, co-pilot, team frame — scored by where you finished:
 # 3 trophies for 1st, 2 for 2nd, 1 for 3rd, none for 4th. First to
 # CUP_TARGET wins the cup. TowerCup is the tally screen between rounds.
 #
@@ -109,8 +125,8 @@ const CUP_TEAM_AWARDS: Array[int] = [3, 0]
 # side of one against a side of two would be counting different numbers of
 # turns.
 const TOWER_CUPS: Array[Dictionary] = [
-	{"id": TOWER_CUP_SOLO, "title": "SOLO CUP", "hint": "everyone for themselves — free for all, a race, then co-op, round and round", "counts": [2, 3, 4], "rounds": [TOWER_FFA, TOWER_RACE_SOLO, TOWER_COOP]},
-	{"id": TOWER_CUP_TEAM, "title": "TEAM CUP", "hint": "left half of the keyboard vs the right — teams, team race and co-pilot in turn", "counts": [3, 4], "rounds": [TOWER_TEAMS, TOWER_RACE, TOWER_COPILOT]},
+	{"id": TOWER_CUP_SOLO, "title": "SOLO CUP", "hint": "everyone for themselves — free for all, a race, co-op, then fill the frame, round and round", "counts": [2, 3, 4], "rounds": [TOWER_FFA, TOWER_RACE_SOLO, TOWER_COOP, TOWER_FRAME_SOLO]},
+	{"id": TOWER_CUP_TEAM, "title": "TEAM CUP", "hint": "left half of the keyboard vs the right — teams, team race, co-pilot and team frame in turn", "counts": [3, 4], "rounds": [TOWER_TEAMS, TOWER_RACE, TOWER_COPILOT, TOWER_FRAME]},
 ]
 
 var cup_scores: Array[int] = [] # per competitor
@@ -281,7 +297,7 @@ func _cup_place(c: int) -> int:
 # the default turn order P1, P2, P3, P4 alternates the teams on its own.
 func tower_team_of(slot: int, variant: int = tower_variant) -> int:
 	match variant:
-		TOWER_FFA, TOWER_RACE_SOLO:
+		TOWER_FFA, TOWER_RACE_SOLO, TOWER_FRAME_SOLO:
 			return slot
 		TOWER_COOP:
 			return 0
@@ -289,7 +305,7 @@ func tower_team_of(slot: int, variant: int = tower_variant) -> int:
 
 func tower_team_name(team: int, variant: int = tower_variant) -> String:
 	match variant:
-		TOWER_FFA, TOWER_RACE_SOLO:
+		TOWER_FFA, TOWER_RACE_SOLO, TOWER_FRAME_SOLO:
 			return PLAYER_CONFIGS[team]["name"] if team < PLAYER_CONFIGS.size() else "?"
 		TOWER_COOP:
 			return "THE CREW"

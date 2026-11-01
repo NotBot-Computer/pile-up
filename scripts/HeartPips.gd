@@ -42,6 +42,17 @@ const MIN_VALUE := 0.85
 ## curve, see `loss_pose` — live here and the two stay one gesture.
 const LOSS_POP := 2.2
 const LOSS_DURATION := 0.45
+## Before it goes, it blinks: LOSS_BLINKS times over LOSS_BLINK_TIME, lit a
+## size up and then nearly out. The blink is the announcement now — the
+## "P1 DROPPED A BRICK −1 LIFE" banner that used to cover the playfield was
+## taken out at the user's request (session AM), so the heart has to be
+## caught by the eye on its own, and a pip that only swells for under half a
+## second at the side of the screen was easy to miss.
+const LOSS_BLINKS := 4
+const LOSS_BLINK_TIME := 1.0
+const LOSS_BLINK_SCALE := 1.35
+const LOSS_BLINK_LOW := 0.12 # alpha in the off half of a blink
+const LOSS_TOTAL := LOSS_BLINK_TIME + LOSS_DURATION
 
 # One texture per colour, kept for the life of the process. Pile Up's HUD is
 # drawn rather than laid out, so it asks for its pips from inside _draw() —
@@ -88,7 +99,13 @@ static func size_at(height: float) -> Vector2:
 ## linear, which is precisely what `PlayerBoard._spend_heart()`'s parallel
 ## Tween does — the point of this function is that a hand-driven redraw and a
 ## Tween can be read side by side and seen to agree.
+##
+## Over LOSS_TOTAL: the blinks first, then that swell-and-fade.
 static func loss_pose(elapsed: float) -> Vector2:
-	var t: float = clampf(elapsed / LOSS_DURATION, 0.0, 1.0)
+	if elapsed < LOSS_BLINK_TIME:
+		var period: float = LOSS_BLINK_TIME / float(LOSS_BLINKS)
+		var lit: bool = fmod(elapsed, period) < period * 0.5
+		return Vector2(LOSS_BLINK_SCALE, 1.0) if lit else Vector2(1.0, LOSS_BLINK_LOW)
+	var t: float = clampf((elapsed - LOSS_BLINK_TIME) / LOSS_DURATION, 0.0, 1.0)
 	var eased: float = 1.0 - pow(1.0 - t, 3.0)
 	return Vector2(lerpf(1.0, LOSS_POP, eased), 1.0 - t)

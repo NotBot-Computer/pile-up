@@ -54,6 +54,10 @@ func _seating_hint(variant: int) -> String:
 			return "Left tower: P1 (+ P3)      Right tower: P2 (+ P4)"
 		GameSettings.TOWER_RACE_SOLO:
 			return "A tower each, side by side, in seat order — and a hex always lands on whoever is highest"
+		GameSettings.TOWER_FRAME_SOLO:
+			return "A tower each, side by side, in seat order — the same frame and the same bricks for everyone"
+		GameSettings.TOWER_FRAME:
+			return "Left frame: P1 (+ P3)      Right frame: P2 (+ P4)"
 	return "Every builder for themselves"
 
 # A cup is several variants, so the line says what it is made of instead of
@@ -62,7 +66,7 @@ func _seating_hint(variant: int) -> String:
 func _cup_hint() -> String:
 	if GameSettings.tower_cup == GameSettings.TOWER_CUP_TEAM:
 		return "Left team: P1 + P3      Right team: P2 + P4 — winning a round is 3 trophies, losing it none, first to %d" % GameSettings.CUP_TARGET
-	return "Free for all, a race, then co-op, and round again — 1st 3 trophies, 2nd 2, 3rd 1, first to %d" % GameSettings.CUP_TARGET
+	return "Free for all, a race, co-op, then fill the frame, and round again — 1st 3 trophies, 2nd 2, 3rd 1, first to %d" % GameSettings.CUP_TARGET
 
 func _select(count: int) -> void:
 	GameSettings.player_count = count

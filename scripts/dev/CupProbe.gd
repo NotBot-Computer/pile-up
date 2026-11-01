@@ -20,7 +20,8 @@ extends Node
 ##            the order is the one this probe *watched* happen — the winner
 ##            first, then (one tower) whoever ran out of lives last, or (a
 ##            race) whoever was still building, tallest first, then the
-##            drop-outs, last out highest; or (co-op, a round of the solo cup)
+##            drop-outs, last out highest; or (frame) best fit first, an
+##            equal fit an equal place; or (co-op, a round of the solo cup)
 ##            fewest bricks dropped first, counted here turn by turn, with an
 ##            equal count an equal place. Every trophy a round hands out, to
 ##            every row, is a car of that round's winner. The tally screen is instantiated
@@ -84,10 +85,10 @@ func _setup(cup: int, count: int) -> void:
 
 func _sums() -> void:
 	var want_rounds := {
-		"solo 2": [GameSettings.TOWER_FFA, GameSettings.TOWER_RACE_SOLO, GameSettings.TOWER_COOP],
-		"solo 4": [GameSettings.TOWER_FFA, GameSettings.TOWER_RACE_SOLO, GameSettings.TOWER_COOP],
-		"team 3": [GameSettings.TOWER_TEAMS, GameSettings.TOWER_RACE],
-		"team 4": [GameSettings.TOWER_TEAMS, GameSettings.TOWER_RACE, GameSettings.TOWER_COPILOT],
+		"solo 2": [GameSettings.TOWER_FFA, GameSettings.TOWER_RACE_SOLO, GameSettings.TOWER_COOP, GameSettings.TOWER_FRAME_SOLO],
+		"solo 4": [GameSettings.TOWER_FFA, GameSettings.TOWER_RACE_SOLO, GameSettings.TOWER_COOP, GameSettings.TOWER_FRAME_SOLO],
+		"team 3": [GameSettings.TOWER_TEAMS, GameSettings.TOWER_RACE, GameSettings.TOWER_FRAME],
+		"team 4": [GameSettings.TOWER_TEAMS, GameSettings.TOWER_RACE, GameSettings.TOWER_COPILOT, GameSettings.TOWER_FRAME],
 	}
 	for k: String in want_rounds:
 		var cup: int = GameSettings.TOWER_CUP_SOLO if k.begins_with("solo") else GameSettings.TOWER_CUP_TEAM
@@ -195,7 +196,9 @@ func _cup(cup: int, count: int, seed_base: int) -> void:
 			cars_before.append(cars.size())
 		var watched: Array[int]
 		watched_places = []
-		if GameSettings.tower_is_race(variant):
+		if GameSettings.tower_is_frame(variant):
+			watched = await _play_frame()
+		elif GameSettings.tower_is_race(variant):
 			watched = await _play_race()
 		else:
 			watched = await _play_tower()
@@ -389,6 +392,45 @@ func _play_race() -> Array[int]:
 				watched.append(i)
 		if race._cup_leave_in <= 0.0:
 			_fail("a finished cup race is not on its way to the tally")
+	race._cup_leave_in = 0.0
+	race.queue_free()
+	await get_tree().physics_frame
+	return watched
+
+# A FRAME round, watched: every tower's fit as this probe reads it once the
+# round is over, best first, seat order on a level fit — which is also a
+# shared place.
+func _play_frame() -> Array[int]:
+	var race = RACE.instantiate()
+	add_child(race)
+	var aimed := {}
+	var t := 0.0
+	while not race.over and t < MATCH_TIMEOUT:
+		for tw in race.towers:
+			if tw.state == "piloting" and tw.active_piece != null and aimed.get(tw) != tw.active_piece:
+				aimed[tw] = tw.active_piece
+				_aim(tw, SPREAD)
+		await get_tree().physics_frame
+		t += get_physics_process_delta_time()
+	var watched: Array[int] = []
+	if not race.over:
+		_fail("a frame round had no result after %.0fs" % t)
+	else:
+		var fits: Array[int] = []
+		for i in range(race.towers.size()):
+			watched.append(i)
+			fits.append(race.towers[i].frame_pct())
+		watched.sort_custom(func(a: int, b: int) -> bool:
+			return fits[a] > fits[b] or (fits[a] == fits[b] and a < b))
+		watched_places = []
+		for _i in watched:
+			watched_places.append(0)
+		for k in range(watched.size()):
+			var same: bool = k > 0 and fits[watched[k]] == fits[watched[k - 1]]
+			watched_places[watched[k]] = watched_places[watched[k - 1]] if same else k
+		print("    frame round: fits %s -> places %s" % [fits, watched_places])
+		if race._cup_leave_in <= 0.0:
+			_fail("a finished cup frame round is not on its way to the tally")
 	race._cup_leave_in = 0.0
 	race.queue_free()
 	await get_tree().physics_frame

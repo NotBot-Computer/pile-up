@@ -303,8 +303,23 @@ const GOAL_SHADOW := Color(0.06, 0.08, 0.20, 0.55)
 # play column (ten cells, aim bound included) clear of the HUD columns in a
 # 750px-wide view. Both unplayed; see the race section of PROJECT_STATE.
 const RACE_LIVES := 5
-const RACE_GOAL_CELLS := 10.0
+const RACE_GOAL_CELLS := 15.0 # was 10 until session AM: "put the goal line higher"
 const RACE_VISIBLE_CELLS := 34.0
+
+# FRAME (GameSettings.tower_is_frame): an outline on the platform built from
+# the first FRAME_BRICKS bricks of the deal (TowerFrame), and exactly those
+# bricks to fill it with. The tower stops after the last one has settled and
+# is marked; the host compares the marks. There are no lives — a brick that
+# falls is simply area the frame does not get — and no skills, because a
+# skill that changes or scales a brick would make the frame unbuildable.
+# Ten bricks is a frame about eight to ten cells tall on the five-cell
+# platform. It was six (five or six tall) for one playtest, and the user
+# asked for a bigger, taller shape (session AM).
+const FRAME_BRICKS := 10
+const FRAME_LINE := Color(1.0, 0.92, 0.55, 0.95)
+const FRAME_FILL := Color(1.0, 0.92, 0.55, 0.16)
+const FRAME_SHADOW := Color(0.06, 0.08, 0.20, 0.60)
+const TowerFrame := preload("res://scripts/TowerFrame.gd")
 
 # The storm casts a random hex from the opponent pool at whoever is up next,
 # every STORM_EVERY turns — and every STORM_EVERY_HIGH once the tower is past
@@ -314,14 +329,25 @@ const RACE_VISIBLE_CELLS := 34.0
 const STORM_EVERY := 3
 const STORM_EVERY_HIGH := 2
 
-# The beat between "everything stopped" and the next brick, and there are two
-# of them because there are two kinds of turn. A turn that cost somebody a
-# life puts a message on screen and that message has to be readable, so it
-# keeps its pause. A turn where nothing fell has nothing to say and nothing
-# to read, and holding the game still for over a second to say it is exactly
-# the dead air that got reported — most turns are this kind.
-const RESOLVE_PAUSE_QUIET := 0.35
-const RESOLVE_PAUSE_EVENT := 1.1
+# The beat between "everything stopped" and the next brick. There used to be
+# two — 1.1s after a turn that cost a life, so its banner could be read, and
+# 0.35s otherwise — until the user asked for the banner to go (the heart's
+# blink says it now, HeartPips.LOSS_BLINKS) and for a more seamless hand-off
+# between players (session AM). With nothing on screen to read there is
+# nothing to wait for, so it is one short beat for every turn: just enough
+# that the next brick does not appear on the same frame the last one is
+# judged.
+const RESOLVE_PAUSE := 0.2
+
+# A new brick appears SPAWN_CLEARANCE above the stack, and for most of the
+# way down there is nothing near it to steer against — PaceProbe measured
+# 1.5s of every 2.4s descent spent more than two cells clear of anything.
+# Until its bottom is within APPROACH_GAP_CELLS of the stack it falls at
+# APPROACH_MULT times the descent speed, still fully steerable; from there on
+# it is the ordinary descent, so the part where aim matters is unchanged.
+# Soft drop is faster still and wins. Session AM.
+const APPROACH_MULT := 2.2
+const APPROACH_GAP_CELLS := 3.5
 
 # A turn ends when the whole world is at rest, not when the brick lands: the
 # interesting case is a brick that lands cleanly and then shoves the tower
@@ -538,6 +564,9 @@ var bricks_dropped: Array[int] = [] # per slot, for the end screen
 var brick_seed: int = 0
 var _brick_rng: RandomNumberGenerator = null
 var goal_cells: float = 0.0 # 0 = no goal line (free-for-all, teams, co-pilot)
+var frame_cells: Dictionary = {} # FRAME only: Vector2i(col from the platform's left, row up) -> true
+var frame_plan: Array = [] # FRAME only: how the frame was built, brick by brick (TowerFrame.generate)
+var frame_score: float = 0.0 # FRAME only: the last mark, 0..1 (TowerFrame.mark)
 var storm_in: int = 0 # co-op: resolved turns until the storm casts again
 var storms: int = 0 # co-op: hexes the storm has sent this match
 var active_piece: TowerPiece = null
@@ -660,6 +689,16 @@ func _start_match() -> void:
 	goal_cells = _goal_for_variant()
 	storm_in = STORM_EVERY
 	storms = 0
+	frame_cells = {}
+	frame_plan = []
+	frame_score = 0.0
+	if is_frame():
+		# A frame is made from the deal, so it needs one even off the host.
+		if brick_seed == 0:
+			brick_seed = (randi() & 0x7fffffff) | 1
+		var made: Dictionary = TowerFrame.generate(brick_seed, FRAME_BRICKS, int(PLATFORM_CELLS), CLASSIC_BIAS)
+		frame_cells = made["cells"]
+		frame_plan = made["plan"]
 	_brick_rng = null
 	if brick_seed != 0:
 		_brick_rng = RandomNumberGenerator.new()
@@ -801,14 +840,17 @@ func _resolve_turn() -> void:
 	best_height = max(best_height, int(round(-stack_top_y / CELL)))
 
 	var team: int = team_of[active_slot]
-	if fallen_this_turn > 0:
+	if is_frame():
+		_update_frame_mark()
+		if fallen_this_turn > 0:
+			bricks_dropped[active_slot] += fallen_this_turn
+	elif fallen_this_turn > 0:
 		lives[team] = max(0, lives[team] - 1)
 		bricks_dropped[active_slot] += fallen_this_turn
 		# The count is already down, so it indexes the pip just spent — the
 		# same convention PlayerBoard._spend_heart() uses on the other mode's
 		# row. The HUD swells it out of its slot rather than blanking it.
 		hud.spend_life(team, lives[team])
-		_announce_fall(team)
 		if lives[team] <= 0:
 			out_order.append(team)
 
@@ -816,7 +858,7 @@ func _resolve_turn() -> void:
 	# skill has to be earned by building, or the player who is knocking the
 	# tower over every turn is the one being handed the tools. In co-pilot both
 	# pairs of hands built it, so both are paid.
-	if fallen_this_turn == 0 and lives[team] > 0:
+	if fallen_this_turn == 0 and lives[team] > 0 and not is_frame():
 		charge[active_slot] = mini(CHARGE_TO_SKILL, charge[active_slot] + 1)
 		_try_grant(active_slot)
 		if crew_mate >= 0:
@@ -848,7 +890,7 @@ func _resolve_turn() -> void:
 		_storm_tick()
 
 	state = "resolving"
-	resolve_timer = RESOLVE_PAUSE_EVENT if fallen_this_turn > 0 else RESOLVE_PAUSE_QUIET
+	resolve_timer = RESOLVE_PAUSE
 	_refresh_hud()
 	# In the race the result is reported the frame it is known, not after the
 	# resolve pause: that pause is longer after a turn that cost a life, and
@@ -998,6 +1040,12 @@ func receive_hex(id: String, caster: int) -> Array[int]:
 func team_summary() -> String:
 	var t: int = _teams_here()[0] if not _teams_here().is_empty() else 0
 	var crew: Array[int] = _team_members(t)
+	if is_frame():
+		var dropped := 0
+		for s in crew:
+			dropped += bricks_dropped[s]
+		var who: String = slot_name(crew[0]) if crew.size() == 1 else GameSettings.tower_team_name(t, variant)
+		return "%s — %d%% fit, %d %s dropped" % [who, frame_pct(), dropped, "brick" if dropped == 1 else "bricks"]
 	var standing: String = "OUT" if lives[t] <= 0 else "%d %s left" % [lives[t], "life" if lives[t] == 1 else "lives"]
 	# A tower of one (the solo race) is named once, not as a team and again
 	# as its only member.
@@ -1148,6 +1196,8 @@ func _update_piloting(delta: float) -> void:
 
 	var soft: bool = _soft_drop_held() and not _effect_soft_drop_locked()
 	var fall: float = SOFT_DROP_SPEED * _effect_soft_drop_mult() if soft else DESCEND_SPEED * _effect_descend_mult()
+	if not soft and _approaching(pos):
+		fall *= APPROACH_MULT
 	var want_down := Vector2(pos.x, pos.y + fall * delta)
 	var landed := false
 	if _blocked(Transform2D(rot, want_down), Vector2.DOWN):
@@ -1177,6 +1227,13 @@ func _update_piloting(delta: float) -> void:
 		_land()
 	else:
 		_refresh_hud()
+
+# Still in the open sky over the stack: the brick's lowest point more than
+# APPROACH_GAP_CELLS above the top of the tower. The half-height is the
+# brick's at its commanded turn, which is what it is turning toward.
+func _approaching(pos: Vector2) -> bool:
+	var bottom: float = pos.y + active_piece.aim_half_width(aim_steps + 1)
+	return stack_top_y - bottom > APPROACH_GAP_CELLS * CELL
 
 # Holding a direction repeats the half-cell step, after a delay long enough
 # that a deliberate single tap never accidentally becomes two.
@@ -1368,17 +1425,11 @@ func _px(width: float) -> float:
 # One brick, drawn against CLASSIC_BIAS. Linear over nineteen entries, once a
 # turn — there is nothing here worth precomputing a table for, and a table
 # would be a second place for the split to be wrong.
+#
+# The pick itself is TowerFrame.pick_brick(), shared so that a frame drawn
+# from a deal and the bricks dealt from it cannot disagree.
 func _next_brick() -> int:
-	var total := 0.0
-	for b: Dictionary in GameSettings.BRICKS:
-		total += CLASSIC_BIAS if b["classic"] else 1.0
-	var pick: float = (_brick_rng.randf() if _brick_rng != null else randf()) * total
-	for i in range(GameSettings.BRICKS.size()):
-		pick -= CLASSIC_BIAS if GameSettings.BRICKS[i]["classic"] else 1.0
-		if pick < 0.0:
-			return i
-	# Only reachable if randf() returns exactly 1.0, which it does not.
-	return GameSettings.BRICKS.size() - 1
+	return TowerFrame.pick_brick(_brick_rng.randf() if _brick_rng != null else randf(), CLASSIC_BIAS)
 
 func _camera_target() -> float:
 	var view_h: float = _view_world().y
@@ -1406,6 +1457,8 @@ func _start_lives() -> int:
 			return COOP_LIVES
 		GameSettings.TOWER_RACE, GameSettings.TOWER_RACE_SOLO:
 			return RACE_LIVES
+		GameSettings.TOWER_FRAME, GameSettings.TOWER_FRAME_SOLO:
+			return 1 # never spent: a fallen brick costs fit, not a life
 	return TEAM_LIVES
 
 func _goal_for_variant() -> float:
@@ -1419,6 +1472,24 @@ func _goal_for_variant() -> float:
 # The settled tower's height, in cells, from the platform to its top.
 func _height_cells() -> float:
 	return -stack_top_y / CELL
+
+func is_frame() -> bool:
+	return GameSettings.tower_is_frame(variant)
+
+# The fit as a whole percentage — what the HUD shows, and what decides the
+# round, so that two towers the screen calls level are level.
+func frame_pct() -> int:
+	return int(round(frame_score * 100.0))
+
+# Marks the tower as it stands. Called once a turn, on a tower at rest.
+func _update_frame_mark() -> void:
+	var settled: Array = []
+	for c in pieces.get_children():
+		var p := c as TowerPiece
+		if p != null and not p.held and not p.doomed:
+			settled.append(p)
+	var reach: float = PLATFORM_CELLS * CELL * 0.5 + AIM_BOUND_CELLS * CELL + CELL
+	frame_score = TowerFrame.mark(frame_cells, settled, int(PLATFORM_CELLS), CELL, reach)["score"]
 
 # Co-op only, once per resolved turn the crew survived. Counts down, and at
 # zero sends a random hex at whoever flies next — as slot -1, which every
@@ -1512,6 +1583,8 @@ func _living_teams() -> int:
 func _decided() -> bool:
 	if winner_team >= 0:
 		return true
+	if is_frame():
+		return bricks_placed >= FRAME_BRICKS
 	var alive: int = _living_teams()
 	if alive == 0:
 		return true
@@ -1537,32 +1610,6 @@ func slot_name(slot: int) -> String:
 	if slot < 0:
 		return "THE STORM"
 	return GameSettings.PLAYER_CONFIGS[slot]["name"]
-
-# Who is answerable for this turn, as the toast should say it: one player, or
-# in co-pilot the crew of two who flew it together.
-func _turn_name() -> String:
-	if crew_mate >= 0:
-		return "%s + %s" % [slot_name(active_slot), slot_name(crew_mate)]
-	return slot_name(active_slot)
-
-func _announce_fall(team: int) -> void:
-	var who: String = _turn_name()
-	var what: String = "BRICK" if fallen_this_turn == 1 else "%d BRICKS" % fallen_this_turn
-	# A team of one is just a player: "P1 DROPPED A BRICK — P1 OUT!" says
-	# nothing the short form does not.
-	if variant == GameSettings.TOWER_FFA or variant == GameSettings.TOWER_RACE_SOLO:
-		if lives[team] <= 0:
-			hud.show_message("%s DROPPED %s — OUT!" % [who, what], Color(1.0, 0.42, 0.36))
-		else:
-			hud.show_message("%s DROPPED %s   −1 LIFE" % [who, what], Color(1.0, 0.66, 0.30))
-		return
-	var team_name: String = GameSettings.tower_team_name(team, variant)
-	if lives[team] <= 0:
-		hud.show_message("%s DROPPED %s — %s OUT!" % [who, what, team_name], Color(1.0, 0.42, 0.36))
-	elif _teams_here().size() > 1:
-		hud.show_message("%s DROPPED %s   %s −1" % [who, what, team_name], Color(1.0, 0.66, 0.30))
-	else:
-		hud.show_message("%s DROPPED %s   −1 LIFE" % [who, what], Color(1.0, 0.66, 0.30))
 
 # --- Input -----------------------------------------------------------------
 
@@ -2019,7 +2066,7 @@ func _refresh_hud() -> void:
 	hud.groups = _hud_groups()
 	hud.subtitle = _hud_subtitle()
 	hud.heading = _hud_heading()
-	hud.charge_max = CHARGE_TO_SKILL
+	hud.charge_max = 0 if is_frame() else CHARGE_TO_SKILL
 	var hexes: Array[Dictionary] = []
 	for e in queued_effects:
 		hexes.append({
@@ -2030,7 +2077,7 @@ func _refresh_hud() -> void:
 		})
 	hud.hexes = hexes
 	hud.hex_slot = _has_rivals()
-	hud.max_lives = _start_lives()
+	hud.max_lives = 0 if is_frame() else _start_lives()
 	hud.active_slot = active_slot
 	hud.crew_mate = crew_mate
 	hud.waiting = (state != "piloting")
@@ -2061,7 +2108,7 @@ func _hud_groups() -> Array[Dictionary]:
 			# A tower of one in the solo race: a team header naming the same
 			# player as the card under it would say everything twice, so it
 			# draws as a free-for-all card, pips and all.
-			"plain": variant == GameSettings.TOWER_RACE_SOLO,
+			"plain": variant == GameSettings.TOWER_RACE_SOLO or variant == GameSettings.TOWER_FRAME_SOLO,
 		})
 	return out
 
@@ -2082,6 +2129,10 @@ func _hud_subtitle() -> String:
 			return "height %d / %d  ·  storm in %d" % [int(round(_height_cells())), int(goal_cells), storm_in]
 		GameSettings.TOWER_RACE, GameSettings.TOWER_RACE_SOLO:
 			return "race to %d  ·  height %d" % [int(goal_cells), int(round(_height_cells()))]
+		GameSettings.TOWER_FRAME, GameSettings.TOWER_FRAME_SOLO:
+			# Short: the column is 230px at 13px, and "fill the frame" plus a
+			# three-digit fit ran off the end of it.
+			return "frame  ·  %d%% fit  ·  brick %d/%d" % [frame_pct(), mini(bricks_placed + 1, FRAME_BRICKS), FRAME_BRICKS]
 	return "one tower, three lives each"
 
 # The navigator for the turn after this one, so the co-pilot banner can name
@@ -2097,7 +2148,21 @@ func _next_crew_mate() -> int:
 		return -1
 	return crew[(team_cursor[t] + 1) % crew.size()]
 
+# FRAME has no skills, so its list is the same less the skill keys: a line
+# of its own goes, and the compact strip's trailing " · keys skills" is cut.
 func _controls_text() -> String:
+	var txt: String = _controls_text_all()
+	if not is_frame():
+		return txt
+	var keep: Array[String] = []
+	for line in txt.split("\n"):
+		if line.ends_with("skills") and line.contains(" · "):
+			keep.append(line.substr(0, line.rfind(" · ")))
+		elif not line.contains("skill"):
+			keep.append(line)
+	return "\n".join(keep)
+
+func _controls_text_all() -> String:
 	if state != "piloting":
 		return ""
 	# One action per line — TowerHUD splits on newlines because the side
@@ -2153,6 +2218,7 @@ func _draw() -> void:
 	_draw_play_column(top, half_w)
 	_draw_height_guides(top, bottom, half_w)
 	_draw_goal_line(half_w)
+	_draw_frame_outline()
 	_draw_outcrop(half_w)
 	_draw_drop_guide(half_w)
 	_draw_dash_ghost()
@@ -2206,6 +2272,36 @@ func _draw_goal_line(half_w: float) -> void:
 	var at := Vector2(-reach + _px(6.0), y - _px(8.0))
 	draw_rect(Rect2(at + Vector2(-_px(4.0), -_px(15.0)), Vector2(_px(44.0), _px(19.0))), GOAL_SHADOW, true)
 	draw_string(font, at, "GOAL", HORIZONTAL_ALIGNMENT_LEFT, -1, size, GOAL_COLOR)
+
+# FRAME's outline: a faint fill over every cell of the frame and a line round
+# its edge — every side of a frame cell whose neighbour is not one — on the
+# same dark underlay as the goal line, so it survives a bright sky. Under the
+# bricks like every guide here, so a brick laid in it covers the fill, and
+# what still shows is what is left to fill.
+func _draw_frame_outline() -> void:
+	if frame_cells.is_empty():
+		return
+	var left: float = -PLATFORM_CELLS * CELL * 0.5
+	for k: Vector2i in frame_cells:
+		draw_rect(Rect2(left + float(k.x) * CELL, -float(k.y + 1) * CELL, CELL, CELL), FRAME_FILL, true)
+	var edges: Array[PackedVector2Array] = []
+	for k: Vector2i in frame_cells:
+		var x0: float = left + float(k.x) * CELL
+		var y0: float = -float(k.y + 1) * CELL
+		var x1: float = x0 + CELL
+		var y1: float = y0 + CELL
+		if not frame_cells.has(k + Vector2i(0, 1)):
+			edges.append(PackedVector2Array([Vector2(x0, y0), Vector2(x1, y0)]))
+		if not frame_cells.has(k + Vector2i(0, -1)) and k.y > 0:
+			edges.append(PackedVector2Array([Vector2(x0, y1), Vector2(x1, y1)]))
+		if not frame_cells.has(k + Vector2i(-1, 0)):
+			edges.append(PackedVector2Array([Vector2(x0, y0), Vector2(x0, y1)]))
+		if not frame_cells.has(k + Vector2i(1, 0)):
+			edges.append(PackedVector2Array([Vector2(x1, y0), Vector2(x1, y1)]))
+	for e in edges:
+		draw_line(e[0], e[1], FRAME_SHADOW, _px(7.0))
+	for e in edges:
+		draw_line(e[0], e[1], FRAME_LINE, _px(3.0))
 
 # The tower stands on a rock outcrop growing out of the ground, not on a
 # platform on legs. Same silhouette language as the cliffs in the backdrop: a

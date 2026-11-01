@@ -64,6 +64,11 @@ And one for Pile Up's **cups** (`GameSettings.tower_cup`, `scripts/TowerCup.gd`;
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/CupProbe.tscn
 ```
 
+And one for Pile Up's **FRAME** rounds (`scripts/TowerFrame.gd`, `GameSettings.tower_is_frame`; docs/PROJECT_STATE.md §5 sessions AL and AM). It checks the frame generator over 400 deals (deterministic, on the platform, holes counted, how long one takes to make), then **builds 100 frames exactly to their own plan under the real physics and requires 100% fit every time** (`-- --perfect=400` for a longer run, ~4 minutes; the grid's own stability rule has been wrong before and only this caught it, docs/PROJECT_STATE.md §5 session AM) — the claim the whole mode rests on, that every frame can be filled with the bricks dealt — then plays whole rounds under `TowerRace` (one tower to plan, the rest blind) and checks nothing is decided until every tower is done and the order is best fit first. `-- --only=frames|perfect|rounds` runs one part. It sets aim directly, so it says nothing about whether a frame is easy to *see* or to line up with the keys:
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/FrameProbe.tscn
+```
+
 Adding or replacing art means running Godot's importer first — a `preload()` of an unimported PNG is a parse error, so every check above fails misleadingly until this has run:
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --import

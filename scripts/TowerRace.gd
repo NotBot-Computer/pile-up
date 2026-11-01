@@ -7,6 +7,13 @@ extends Control
 ## last one left wins. Hexes cast on one tower land on another
 ## (TowerMode.receive_hex), on that tower's next brick.
 ##
+## It also hosts FRAME (GameSettings.tower_is_frame), which is not a race at
+## all but needs exactly this: a tower per team, side by side, the same deal
+## on each. There nobody is out and nothing is first — every tower stops
+## after its frame's bricks (TowerMode.FRAME_BRICKS), waits for the others,
+## and the best fit wins. Everything FRAME does differently here is behind
+## `frame_round`.
+##
 ## ## Why several TowerModes rather than one with several platforms
 ##
 ## A TowerMode is one turn loop: one brick in the air, one settle, one
@@ -80,6 +87,8 @@ const OUT_TEXT := Color(1.0, 0.45, 0.42, 0.95)
 var variant: int = GameSettings.TOWER_RACE
 var towers: Array = [] # left to right; untyped, TowerMode has no class_name
 var dropped_out: Array[bool] = [] # per tower: ran out of lives, race goes on without it
+var done: Array[bool] = [] # FRAME, per tower: placed all its bricks, waiting for the rest
+var frame_round := false
 var viewports: Array[SubViewport] = []
 var view_w: float = 0.0
 var over := false
@@ -91,7 +100,8 @@ var _cup_leave_in: float = 0.0 # cup only: see TowerMode.CUP_RESULT_HOLD
 
 func _ready() -> void:
 	frame.draw.connect(_draw_frame)
-	variant = GameSettings.tower_variant if GameSettings.tower_is_race() else GameSettings.TOWER_RACE
+	variant = GameSettings.tower_variant if GameSettings.tower_is_hosted() else GameSettings.TOWER_RACE
+	frame_round = GameSettings.tower_is_frame(variant)
 	var full := size
 	if full.x <= 0.0:
 		full = get_viewport().get_visible_rect().size
@@ -132,6 +142,7 @@ func _ready() -> void:
 		towers.append(tower)
 		viewports.append(vp)
 		dropped_out.append(false)
+		done.append(false)
 	get_tree().root.size_changed.connect(_on_window_resized)
 
 # One tower per team: two in the team race, one per player in the solo one.
@@ -183,6 +194,7 @@ func _restart() -> void:
 	var deal: int = _new_deal()
 	for i in range(towers.size()):
 		dropped_out[i] = false
+		done[i] = false
 		towers[i].brick_seed = deal
 		towers[i]._start_match()
 
@@ -238,6 +250,9 @@ func tower_finished(tower) -> void:
 	var i: int = towers.find(tower)
 	if i < 0:
 		return
+	if frame_round:
+		_frame_finished(i)
+		return
 	if tower.winner_team >= 0:
 		_declare(i, "%s reached the line first" % _name_of(i))
 		return
@@ -254,18 +269,43 @@ func tower_finished(tower) -> void:
 	elif left.is_empty():
 		_declare(-1, "everybody ran out of lives")
 
+# FRAME: one tower has laid its last brick. It stops where it is (halt() is
+# what keeps its own end-of-match from reporting a second time), and once the
+# last tower is in, the best fit wins — level fits (to the percent, as shown)
+# are a draw for 1st, which a cup pays as a shared place.
+func _frame_finished(i: int) -> void:
+	if done[i]:
+		return
+	done[i] = true
+	towers[i].halt()
+	if done.has(false):
+		return
+	var order: Array[int] = placements()
+	var best: int = order[0]
+	var level: int = 0
+	for j in order:
+		if towers[j].frame_pct() == towers[best].frame_pct():
+			level += 1
+	if level > 1:
+		_declare(-1, "a dead heat at %d%% fit" % towers[best].frame_pct())
+	else:
+		_declare(best, "the best fit, %d%%" % towers[best].frame_pct())
+
 func _declare(won: int, why: String) -> void:
 	over = true
 	winner = won
 	for t in towers:
 		t.halt()
-	overlay_title.text = "NOBODY WINS" if won < 0 else "%s WINS" % _name_of(won)
+	overlay_title.text = ("IT'S A DRAW" if frame_round else "NOBODY WINS") if won < 0 else "%s WINS" % _name_of(won)
 	var lines: Array[String] = [why, ""]
 	for t in towers:
 		lines.append(t.team_summary())
 	overlay_body.text = "\n".join(lines)
+	if frame_round:
+		overlay_hint.text = "ENTER to play again      ESC for the menu"
 	if GameSettings.tower_cup != GameSettings.TOWER_CUP_NONE:
-		GameSettings.cup_record(placements())
+		var order: Array[int] = placements()
+		GameSettings.cup_record(order, placement_places(order))
 		overlay_hint.text = "ENTER for the trophies      ESC for the menu"
 		_cup_leave_in = towers[0].CUP_RESULT_HOLD if not towers.is_empty() else 3.0
 	overlay.visible = true
@@ -276,6 +316,17 @@ func _declare(won: int, why: String) -> void:
 # seat order), since being in the race at the end beats having left it; then
 # the drop-outs, the last one out highest.
 func placements() -> Array[int]:
+	if frame_round:
+		# Best fit first; a level fit goes to the earlier seat in the order,
+		# and placement_places() gives the two the same place.
+		var by_fit: Array[int] = []
+		for j in range(towers.size()):
+			by_fit.append(j)
+		by_fit.sort_custom(func(a: int, b: int) -> bool:
+			var fa: int = towers[a].frame_pct()
+			var fb: int = towers[b].frame_pct()
+			return fa > fb or (fa == fb and a < b))
+		return by_fit
 	var order: Array[int] = []
 	if winner >= 0:
 		order.append(winner)
@@ -296,6 +347,17 @@ func placements() -> Array[int]:
 		if not order.has(out_order[k]):
 			order.append(out_order[k])
 	return order
+
+# Each entry of placements()' 0-based place: its index, except in FRAME,
+# where the same fit is the same place — 1st, 1st, 3rd.
+func placement_places(order: Array[int]) -> Array[int]:
+	var out: Array[int] = []
+	for k in range(order.size()):
+		if frame_round and k > 0 and towers[order[k]].frame_pct() == towers[order[k - 1]].frame_pct():
+			out.append(out[k - 1])
+		else:
+			out.append(k)
+	return out
 
 func _leave_for_cup() -> void:
 	_cup_leave_in = 0.0
@@ -325,6 +387,9 @@ func _draw_frame() -> void:
 			frame.draw_rect(Rect2(x0, 0.0, view_w, h), OUT_DIM, true)
 			frame.draw_string(font, Vector2(x0, h * 0.5), "%s OUT" % _name_of(i),
 				HORIZONTAL_ALIGNMENT_CENTER, view_w, 30, OUT_TEXT)
+		if frame_round:
+			_draw_fit_bar(i, x0, h)
+			continue
 		if goal <= 0.0:
 			continue
 		var bx: float = x0 + BAR_MARGIN
@@ -337,3 +402,28 @@ func _draw_frame() -> void:
 		frame.draw_rect(Rect2(bx + bw - 2.0, by - 3.0, 3.0, BAR_H + 6.0), t.GOAL_COLOR, true)
 		frame.draw_string(font, Vector2(bx + bw + 8.0, by + BAR_H), "%d / %d" % [int(round(t._height_cells())), int(goal)],
 			HORIZONTAL_ALIGNMENT_LEFT, 52.0, 13, Color(1.0, 1.0, 1.0, 0.9))
+
+# FRAME's bar: the fit so far, out of 100%, in the same place and on the same
+# baseline as the race's progress bar — over it, how many bricks are left, or
+# a DONE tag on a tower that has laid its last brick and is waiting for the
+# others.
+func _draw_fit_bar(i: int, x0: float, h: float) -> void:
+	var t = towers[i]
+	var font: Font = ThemeDB.fallback_font
+	var bx: float = x0 + BAR_MARGIN
+	var bw: float = view_w - BAR_MARGIN * 2.0 - 52.0
+	var by: float = h - BAR_UP
+	frame.draw_rect(Rect2(bx - 6.0, by - 8.0, view_w - BAR_MARGIN * 2.0 + 12.0, BAR_H + 16.0), BAR_PLATE, true)
+	frame.draw_rect(Rect2(bx, by, bw, BAR_H), BAR_EMPTY, true)
+	frame.draw_rect(Rect2(bx, by, bw * clampf(t.frame_score, 0.0, 1.0), BAR_H), t._team_color(i), true)
+	frame.draw_string(font, Vector2(bx + bw + 8.0, by + BAR_H), "%d%%" % t.frame_pct(),
+		HORIZONTAL_ALIGNMENT_LEFT, 52.0, 13, Color(1.0, 1.0, 1.0, 0.9))
+	if done[i] and not over:
+		frame.draw_string(font, Vector2(x0, by - 18.0), "DONE — waiting for the others",
+			HORIZONTAL_ALIGNMENT_CENTER, view_w, 15, Color(1.0, 1.0, 1.0, 0.85))
+	elif not over:
+		# The round is a fixed number of bricks, so how many are left is said
+		# outright, where the fit is, rather than only in the HUD's small print.
+		var left: int = maxi(0, t.FRAME_BRICKS - t.bricks_placed)
+		frame.draw_string(font, Vector2(x0, by - 18.0), "%d %s LEFT" % [left, "BRICK" if left == 1 else "BRICKS"],
+			HORIZONTAL_ALIGNMENT_CENTER, view_w, 15, Color(1.0, 1.0, 1.0, 0.85))
